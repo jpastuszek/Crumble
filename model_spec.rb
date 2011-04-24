@@ -33,8 +33,8 @@ describe NameServer do
 
   it "should not accept name server of same IP" do
     lambda {
-      NameServer.new(:ip => "192.168.7.1").save
-      NameServer.new(:ip => "192.168.7.1").save
+      NameServer.new(:ip => "192.168.7.1").save!
+      NameServer.new(:ip => "192.168.7.1").save!
     }.should raise_exception DataObjects::IntegrityError
   end
 
@@ -63,19 +63,31 @@ describe Owner do
 
   it "needs at least a name to be defined" do
     lambda {
-      Owner.new.save
+      Owner.new.save!
     }.should raise_exception
     
     lambda {
-      Owner.new(:name => "jakub").save
+      Owner.new(:name => "jakub").save!
     }.should_not raise_exception
   end
 
   it "should not accept two owners of the same name" do
     lambda {
-      Owner.new(:name => "jakub").save
-      Owner.new(:name => "jakub").save
+      Owner.new(:name => "jakub").save!
+      Owner.new(:name => "jakub").save!
     }.should raise_exception DataObjects::IntegrityError
+  end
+
+  it "should be possible to rename the owner after it is assigned to a system" do
+      s = System.new(:host_name => "test", :domain => "xyz.com")
+      o = Owner.new(:name => "jakub")
+      s.owner = o
+      s.save
+
+      o.name = "zenon"
+      o.save
+
+      System.get("test", "xyz.com").owner.name.should == "zenon"
   end
 end
 
@@ -84,19 +96,19 @@ describe System do
 
   it "should require host_name and domain properties" do
     lambda {
-      System.new.save
+      System.new.save!
     }.should raise_exception
 
     lambda {
-      System.new(:host_name => "test").save
+      System.new(:host_name => "test").save!
     }.should raise_exception
     
     lambda {
-      System.new(:domain => "test").save
+      System.new(:domain => "test").save!
     }.should raise_exception
     
     lambda {
-      System.new(:host_name => "test", :domain => "xyz.com").save
+      System.new(:host_name => "test", :domain => "xyz.com").save!
     }.should_not raise_exception
   end
 
@@ -112,8 +124,8 @@ describe System do
 
   it "should not accept system of the same host name and domain" do
     lambda {
-      System.new(:host_name => "test", :domain => "xyz.com").save
-      System.new(:host_name => "test", :domain => "xyz.com").save
+      System.new(:host_name => "test", :domain => "xyz.com").save!
+      System.new(:host_name => "test", :domain => "xyz.com").save!
     }.should raise_exception DataObjects::IntegrityError
   end
 

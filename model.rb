@@ -19,7 +19,8 @@ end
 class Owner
 	include DataMapper::Resource
 
-	property :name, String, :key => true
+	property :id, Serial
+	property :name, String, :required => true, :unique => true
 	property :email, String
 	property :comment, Text
 
@@ -32,4 +33,3 @@ class NameServer
 	property :ip, IPAddress, :key => true
 	has n, :systems, :through => Resource
 end
-
