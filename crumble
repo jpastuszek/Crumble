@@ -2,13 +2,19 @@
 
 require 'model'
 require 'main'
+require 'activesupport'
 
 models = [System, Owner, NameServer]
 
 Main do
-  option 'db' do
-    required
+  option 'db', 'd' do
+    description 'database URL to work on'
     argument_required
+    default 'sqlite:test.sql'
+  end
+
+  option 'noop', 'n' do
+    description 'do not change any data in the database'
   end
 
   def connect
@@ -38,7 +44,7 @@ Main do
   end
 
   models.each do |model|
-    mode model.name.downcase do
+    mode model.name.tableize do
       mode 'new' do
         fattr :model => model
 
@@ -48,20 +54,21 @@ Main do
         fattr :relationships => relationships
 
         settable_properties.each do |p|
-          option p.name.to_s do
-            required if p.key?
+          option p.name.to_s.dasherize do
+            required if p.key? or p.required?
             argument_required
           end
         end
 
         relationships.each do |re|
-          option re.name.to_s do
+          option re.name.to_s.dasherize.singularize do
             argument_required
+            p re.class
             case re.class.name
               when "DataMapper::Associations::ManyToOne::Relationship"
                 required if re.required?
               when "DataMapper::Associations::ManyToMany::Relationship"
-                arity 1
+                description 'can be used more than onece'
             end
           end
         end
@@ -69,15 +76,15 @@ Main do
         def run
           # collect set values - does not include foreign links
           values = {}
-          settable_properties.map{|pr| pr.name.to_s}.each do |pr|
-            values[pr] = params[pr].value if params[pr].given?
+          settable_properties.map{|pr| pr.name.to_s.dasherize}.each do |pr|
+            values[pr.underscore] = params[pr].value if params[pr].given?
           end
 
           # build a list of foreign key record to link to record being created
           to_assign = []
           relationships.each do |re|
-            next unless params[re.name.to_s].given?
-            params[re.name.to_s].values.each do |value|
+            next unless params[re.name.to_s.dasherize.singularize].given?
+            params[re.name.to_s.dasherize.singularize].values.each do |value|
               # some foreign records may have multiple natural keys - separate by ','
               split_values = value.split(',')
 
@@ -118,9 +125,9 @@ Main do
               end
             end
 
-            m.save
+            m.save unless params['noop'].given?
 
-            puts "Insterted #{model.name.downcase}:"
+            puts "Insterted #{model.name.downcase}#{" (noop)" if params['noop'].given?}:"
             dump.call m
           end
         end
