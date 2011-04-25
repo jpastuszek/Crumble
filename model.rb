@@ -1,6 +1,3 @@
-require 'rubygems'
-require 'data_mapper'
-
 DataMapper::Property::String.length(128)
 
 class System

@@ -1,10 +1,73 @@
 #!/usr/bin/ruby
 
+require 'pp'
+require 'rubygems'
+require 'data_mapper'
+
 require 'model'
 require 'main'
 require 'activesupport'
 
 models = [System, Owner, NameServer]
+
+module DeepDump
+  module ClassMethods
+    def save_model
+      @dump_properties = (self.properties - self.serial).map{|sp| sp.name}
+      @dump_relationships = self.relationships.map{|r| r.name}
+    end
+
+    def dump_properties
+      @dump_properties
+    end
+
+    def dump_relationships
+      @dump_relationships
+    end
+  end
+
+  module InstanceMethods
+    def deep_dump(out = {}, show_self = false, show_empty = false, show_nil = false)
+      $dump_stack ||= []
+      $dump_stack << self.hash
+
+      self.class.dump_properties.each do |dp|
+        o = send(dp)
+        out[dp] = o.to_s if show_empty or o
+      end
+
+      self.class.dump_relationships.each do |m|
+        nesteds = send(m)
+        if nesteds.kind_of? Array
+          o = []
+          nesteds.each do |nested|
+            unless $dump_stack.include?(nested.hash)
+              o << nested.deep_dump 
+            else
+              o << :self if show_self
+            end
+          end
+          out[m] = o if show_empty or not o.empty?
+        else
+          nested = nesteds
+          unless $dump_stack.include?(nested.hash)
+            out[m] = nested.deep_dump 
+          else
+            out[m] = :self if show_self
+          end
+        end
+      end
+      $dump_stack.pop
+      return out
+    end
+  end
+end
+
+models.each do |model|
+  model.extend DeepDump::ClassMethods
+  model.send :include, DeepDump::InstanceMethods
+  model.save_model
+end
 
 Main do
   option 'db', 'd' do
@@ -30,17 +93,8 @@ Main do
     DataMapper.auto_upgrade!
   end
 
-  # builds dump lambda - has to be called before connect
-  # after we are connected the model gets some garbage stuff from the DB
-  def dumper(model)
-    relationships = model.relationships.map{|r| r.name}
-    settable_properties = (model.properties - model.serial).map{|sp| sp.name}
-
-    dump = lambda do |record|
-      puts record.to_yaml(:only => settable_properties, :methods => relationships)
-    end
-
-    yield dump
+  def record_print(record)
+    puts record.to_yaml(:SortKeys => true)
   end
 
   models.each do |model|
@@ -106,30 +160,28 @@ Main do
             end
           end
 
-          dumper(model) do |dump|
-            connect
+          connect
 
-            # create new record with set values
-            m = model.new(values)
+          # create new record with set values
+          m = model.new(values)
 
-            # assign foreign records
-            to_assign.each do |foreign_model, name, query|
-              forign_record = foreign_model.first(query)
-              raise "Fereign record not found: #{foreign_model} #{query.inspect}" unless forign_record
+          # assign foreign records
+          to_assign.each do |foreign_model, name, query|
+            forign_record = foreign_model.first(query)
+            raise "Fereign record not found: #{foreign_model} #{query.inspect}" unless forign_record
 
-              # append arrays, otherwise set
-              if m.send(name).kind_of? Array
-                m.send(name) << forign_record
-              else
-                m.send((name + "=").to_sym, forign_record)
-              end
+            # append arrays, otherwise set
+            if m.send(name).kind_of? Array
+              m.send(name) << forign_record
+            else
+              m.send((name + "=").to_sym, forign_record)
             end
-
-            m.save unless params['noop'].given?
-
-            puts "Insterted #{model.name.downcase}#{" (noop)" if params['noop'].given?}:"
-            dump.call m
           end
+
+          m.save unless params['noop'].given?
+
+          puts "Insterted #{model.name.downcase}#{" (noop)" if params['noop'].given?}:"
+          record_print m.deep_dump
         end
       end
 
@@ -138,12 +190,12 @@ Main do
         fattr :order => (model.properties - model.serial).select{|pr| pr.unique?}
 
         def run
-          dumper(model) do |dump|
-            connect
-            model.all(:order => order).each do |record|
-              dump.call record
-            end
+          all = []
+          connect
+          model.all(:order => order).each do |record|
+            all << record.deep_dump
           end
+          record_print(model.name.underscore.pluralize.to_sym => all)
         end
       end
     end
