@@ -1,0 +1,145 @@
+#!/usr/bin/ruby
+
+require 'model'
+require 'main'
+
+models = [System, Owner, NameServer]
+
+Main do
+  option 'db' do
+    required
+    argument_required
+  end
+
+  def connect
+    puts "Connecting: #{params['db'].value}"
+
+    #DataMapper::Logger.new($stdout, :debug)
+    DataMapper::Model.raise_on_save_failure = true
+
+    DataMapper.setup(:default, params['db'].value)
+
+    DataMapper.finalize
+
+    DataMapper.auto_upgrade!
+  end
+
+  # builds dump lambda - has to be called before connect
+  # after we are connected the model gets some garbage stuff from the DB
+  def dumper(model)
+    relationships = model.relationships.map{|r| r.name}
+    settable_properties = (model.properties - model.serial).map{|sp| sp.name}
+
+    dump = lambda do |record|
+      puts record.to_yaml(:only => settable_properties, :methods => relationships)
+    end
+
+    yield dump
+  end
+
+  models.each do |model|
+    mode model.name.downcase do
+      mode 'new' do
+        fattr :model => model
+
+        settable_properties = model.properties - model.serial
+        fattr :settable_properties => settable_properties
+        relationships = model.relationships
+        fattr :relationships => relationships
+
+        settable_properties.each do |p|
+          option p.name.to_s do
+            required if p.key?
+            argument_required
+          end
+        end
+
+        relationships.each do |re|
+          option re.name.to_s do
+            argument_required
+            case re.class.name
+              when "DataMapper::Associations::ManyToOne::Relationship"
+                required if re.required?
+              when "DataMapper::Associations::ManyToMany::Relationship"
+                arity 1
+            end
+          end
+        end
+
+        def run
+          # collect set values - does not include foreign links
+          values = {}
+          settable_properties.map{|pr| pr.name.to_s}.each do |pr|
+            values[pr] = params[pr].value if params[pr].given?
+          end
+
+          # build a list of foreign key record to link to record being created
+          to_assign = []
+          relationships.each do |re|
+            next unless params[re.name.to_s].given?
+            params[re.name.to_s].values.each do |value|
+              # some foreign records may have multiple natural keys - separate by ','
+              split_values = value.split(',')
+
+              # find foreign model - in ManyToMany it may be either parent or child
+              foreign_model = eval(re.parent_model_name)
+              foreign_model = eval(re.child_model_name) if foreign_model == model
+
+              # properties to search for when looking for foreign record
+              search_keys = (foreign_model.properties - foreign_model.serial).select{|p| p.unique? and p.required?}.map{|search_key| search_key.name}
+
+              # building final query by assignment of values to search keys
+              query = {}
+              search_keys.each do |search_key|
+                query[search_key] = split_values.shift
+              end
+
+              # collect assignment data
+              to_assign << [foreign_model, re.name.to_s, query]
+            end
+          end
+
+          dumper(model) do |dump|
+            connect
+
+            # create new record with set values
+            m = model.new(values)
+
+            # assign foreign records
+            to_assign.each do |foreign_model, name, query|
+              forign_record = foreign_model.first(query)
+              raise "Fereign record not found: #{foreign_model} #{query.inspect}" unless forign_record
+
+              # append arrays, otherwise set
+              if m.send(name).kind_of? Array
+                m.send(name) << forign_record
+              else
+                m.send((name + "=").to_sym, forign_record)
+              end
+            end
+
+            m.save
+
+            puts "Insterted #{model.name.downcase}:"
+            dump.call m
+          end
+        end
+      end
+
+      mode 'list' do
+        fattr :model => model
+        fattr :order => (model.properties - model.serial).select{|pr| pr.unique?}
+
+        def run
+          dumper(model) do |dump|
+            connect
+            model.all(:order => order).each do |record|
+              dump.call record
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
